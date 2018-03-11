@@ -215,8 +215,14 @@ void WiFiManager::addParameter(WiFiManagerParameter *p) {
 }
 
 void WiFiManager::setupConfigPortal() {
+#ifdef ESP8266
   dnsServer.reset(new DNSServer());
   server.reset(new ESP8266WebServer(80));
+#endif
+#ifdef ESP32
+  dnsServer.reset(new DNSServer());
+  server.reset(new WebServer(80));
+#endif
 
   DEBUG_WM("");
   _configPortalStart = millis();
@@ -278,7 +284,7 @@ void WiFiManager::bindHandler() {
 }
 
 boolean WiFiManager::autoConnect() {
-  String ssid = "ESP" + String(ESP.getChipId());
+  String ssid = "ESP" + String(ESP_getChipId());
   return autoConnect(ssid.c_str(), NULL);
 }
 
@@ -304,7 +310,12 @@ boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
 }
 
 boolean WiFiManager::configPortalHasTimeout(){
+#ifdef ESP8266
     if(_configPortalTimeout == 0 || wifi_softap_get_station_num() > 0){
+#endif
+#ifdef ESP32
+    if(_configPortalTimeout == 0){  // TODO
+#endif
       _configPortalStart = millis(); // kludge, bump configportal start time to skew timeouts
       return false;
     }
@@ -312,7 +323,7 @@ boolean WiFiManager::configPortalHasTimeout(){
 }
 
 boolean WiFiManager::startConfigPortal() {
-  String ssid = "ESP" + String(ESP.getChipId());
+  String ssid = "ESP" + String(ESP_getChipId());
   return startConfigPortal(ssid.c_str(), NULL);
 }
 
@@ -476,11 +487,15 @@ int WiFiManager::connectWifi(String ssid, String pass) {
   } else {
     if (WiFi.SSID()) {
       DEBUG_WM("Using last saved values, should be faster");
+#ifdef ESP8266
       //trying to fix connection in progress hanging
       ETS_UART_INTR_DISABLE();
       wifi_station_disconnect();
       ETS_UART_INTR_ENABLE();
-
+#endif
+#ifdef ESP32
+      esp_wifi_disconnect();
+#endif
       WiFi.begin();
     } else {
       DEBUG_WM("No saved credentials");
@@ -523,9 +538,15 @@ uint8_t WiFiManager::waitForConnectResult() {
 }
 
 void WiFiManager::startWPS() {
+#ifdef ESP8266
   DEBUG_WM("START WPS");
   WiFi.beginWPSConfig();
   DEBUG_WM("END WPS");
+#endif
+#ifdef ESP32
+  // TODO
+  DEBUG_WM("ESP32 WPS TODO");
+#endif
 }
 /*
   String WiFiManager::getSSID() {
@@ -796,7 +817,12 @@ void WiFiManager::handleWifi(boolean scan) {
           rssiQ += quality;
           item.replace(FPSTR(FS_V), WiFi.SSID(indices[i]));
           item.replace(F("{r}"), rssiQ);
+#ifdef ESP8266
           if (WiFi.encryptionType(indices[i]) != ENC_TYPE_NONE) {
+#endif
+#ifdef ESP32
+          if (WiFi.encryptionType(indices[i]) != WIFI_AUTH_OPEN) {
+#endif
             item.replace(FPSTR(FS_I), F("l"));
           } else {
             item.replace(FPSTR(FS_I), "");
@@ -962,13 +988,17 @@ void WiFiManager::handleInfo() {
 
   page += get_html_info();
   // chip id
-  page.replace(F("{cid}"), String(ESP.getChipId()));
+  page.replace(F("{cid}"), String(ESP_getChipId));
+#ifdef ESP8266
   // flash chip id
   page.replace(F("{fid}"), String(ESP.getFlashChipId()));
+#endif
   // IDE Flash Size
   page.replace(F("{fsz}"), String(ESP.getFlashChipSize()));
+#ifdef ESP8266
   // Real Flash Size
   page.replace(F("{rfz}"), String(ESP.getFlashChipRealSize()));
+#endif
   // Soft AP IP
   page.replace(F("{sip}"), WiFi.softAPIP().toString());
   // Soft AP MAC
@@ -985,26 +1015,32 @@ void WiFiManager::handleInfo() {
   page.replace(F("{tmc}"), WiFi.macAddress());
   // Free Heap
   page.replace(F("{frh}"), String(ESP.getFreeHeap()));
+#ifdef ESP8266
   // Sketch Size
   page.replace(F("{skz}"), String(ESP.getSketchSize()));
   // Sketch MD5
   page.replace(F("{md5}"), String(ESP.getSketchMD5()));
   // Free Sketch Space
   page.replace(F("{fss}"), String(ESP.getFreeSketchSpace()));
+#endif
   // Flash Chip Mode
   page.replace(F("{fcm}"), String(ESP.getFlashChipMode()));
   // Flash Chip Speed
   page.replace(F("{fcs}"), String(ESP.getFlashChipSpeed()));
+#ifdef ESP8266
   // Core Version
   page.replace(F("{cve}"), String(ESP.getCoreVersion()));
-  // SDK Version
+#endif
+    // SDK Version
   page.replace(F("{sdk}"), String(ESP.getSdkVersion()));
+#ifdef ESP8266
   // Boot Version
   page.replace(F("{btv}"), String(ESP.getBootVersion()));
   // Boot Mode
   page.replace(F("{btm}"), String(ESP.getBootMode()));
   // VCC
   page.replace(F("{vcc}"), String(ESP.getVcc()));
+#endif
   // CPU Speed
   page.replace(F("{csp}"), String(ESP.getCpuFreqMHz()));
 
@@ -1037,7 +1073,24 @@ void WiFiManager::handleReset(bool is_also_setting) {
   if (is_also_setting)
   {
     resetSettings();
+#ifdef ESP8266
     ESP.eraseConfig();
+#endif
+
+// From ESP 8266
+#ifdef ESP32
+    {
+      const size_t cfgSize = 0x4000;
+      size_t cfgAddr = ESP.getFlashChipSize() - cfgSize;
+
+      for (size_t offset = 0; offset < cfgSize; offset += SPI_FLASH_SEC_SIZE) {
+        if (!ESP.flashEraseSector((cfgAddr + offset) / SPI_FLASH_SEC_SIZE)) {
+          break;
+        }
+      }
+    }
+#endif
+
     delay(5000);
   }
 

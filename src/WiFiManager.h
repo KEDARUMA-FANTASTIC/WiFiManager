@@ -56,14 +56,31 @@ build_flags = -g3 -D DEBUG=1 -D WIFIMAN_DEBUG=1 -D NO_GLOBAL_SERIAL1 -D USE_GLOB
 build_flags = -g3
 */
 
+#ifdef ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <DNSServer.h>
+#endif
+
+#ifdef ESP32
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#endif
+
 #include <memory>
 
+#ifdef ESP8266
 extern "C" {
   #include "user_interface.h"
 }
+#define ESP_getChipId()   (ESP.getChipId())
+#endif
+
+#ifdef ESP32
+#include <esp_wifi.h>
+#define ESP_getChipId()   ((uint32_t)ESP.getEfuseMac())
+#endif
 
 #ifdef WIFIMAN_MONITOR_DEVICE
 #include "HackSerial.h"
@@ -202,8 +219,15 @@ class WiFiManager
     boolean isUseStaticIP() { return _is_use_static_ip; }
 
   protected:
+#ifdef ESP8266
     std::unique_ptr<DNSServer>        dnsServer;
     std::unique_ptr<ESP8266WebServer> server;
+#endif
+
+#ifdef ESP32
+    std::unique_ptr<DNSServer>        dnsServer;
+    std::unique_ptr<WebServer>        server;
+#endif
 
     //const int     WM_DONE                 = 0;
     //const int     WM_WAIT                 = 10;
