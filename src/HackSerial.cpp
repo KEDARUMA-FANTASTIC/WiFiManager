@@ -5,6 +5,14 @@
 
 #include "HackSerial.h"
 
+#ifndef UART0
+#define UART0 0
+#endif
+
+#ifndef UART1
+#define UART1 1
+#endif
+
 #if defined(USE_GLOBAL_HACK_SERIAL) && !defined(NO_GLOBAL_INSTANCES) && defined(NO_GLOBAL_SERIAL)
 HackSerial HKSerial(UART0);
 #endif

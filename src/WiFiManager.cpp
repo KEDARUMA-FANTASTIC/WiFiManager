@@ -14,6 +14,10 @@
 #include <functional>
 #include "WiFiManager.h"
 
+#ifdef ESP32
+#include <EEPROM.h>
+#endif
+
 namespace {
 
 const char HTML_HEAD[] PROGMEM =
@@ -988,7 +992,7 @@ void WiFiManager::handleInfo() {
 
   page += get_html_info();
   // chip id
-  page.replace(F("{cid}"), String(ESP_getChipId));
+  page.replace(F("{cid}"), String(ESP_getChipId()));
 #ifdef ESP8266
   // flash chip id
   page.replace(F("{fid}"), String(ESP.getFlashChipId()));
