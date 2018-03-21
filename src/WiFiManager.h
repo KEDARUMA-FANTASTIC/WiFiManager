@@ -56,6 +56,9 @@ build_flags = -g3 -D DEBUG=1 -D WIFIMAN_DEBUG=1 -D NO_GLOBAL_SERIAL1 -D USE_GLOB
 build_flags = -g3
 */
 
+#include <memory>
+#include <vector>
+
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -67,8 +70,6 @@ build_flags = -g3
 #include <WebServer.h>
 #include <DNSServer.h>
 #endif
-
-#include <memory>
 
 #ifdef ESP8266
 extern "C" {
@@ -93,15 +94,10 @@ extern "C" {
 #ifndef WIFIMAN_DEBUG
 #define WIFIMAN_DEBUG   1
 #endif
+
 #ifndef DEBUG
 #undef WIFIMAN_DEBUG
 #define WIFIMAN_DEBUG 0
-#endif
-
-#if (WIFIMAN_DEBUG)
-#define DEBUG_WM(...)      WiFiManager::_DEBUG_WM(__VA_ARGS__)
-#else
-#define DEBUG_WM(...)      do {} while(0)
 #endif
 
 // Frequently used character strings are shared and ROM and saved
@@ -134,35 +130,42 @@ const char FS_SERIAL_MONITOR[] PROGMEM = "Serial Monitor";
 #endif
 }
 
+#ifndef WIFI_MANAGER_MAX_PARAMS
 #define WIFI_MANAGER_MAX_PARAMS 10
+#endif
 
 class WiFiManagerParameter {
-  public:
-    WiFiManagerParameter(const char *custom);
-    WiFiManagerParameter(const char *id, const char *placeholder, const char *defaultValue, int length);
-    WiFiManagerParameter(const char *id, const char *placeholder, const char *defaultValue, int length, const char *custom);
+public:
+  /**
+      Create custom parameters that can be added to the WiFiManager setup web page
+      @id is used for HTTP queries and must not contain spaces nor other special characters
+  */
+  WiFiManagerParameter(const char *custom);
+  WiFiManagerParameter(const char *id, const char *placeholder, const char *defaultValue, int length);
+  WiFiManagerParameter(const char *id, const char *placeholder, const char *defaultValue, int length, const char *custom);
+  ~WiFiManagerParameter();
 
-    const char *getID();
-    const char *getValue();
-    const char *getPlaceholder();
-    int         getValueLength();
-    const char *getCustomHTML();
-  private:
-    const char *_id;
-    const char *_placeholder;
-    char       *_value;
-    int         _length;
-    const char *_customHTML;
+  const char *getID();
+  const char *getValue();
+  const char *getPlaceholder();
+  int         getValueLength();
+  const char *getCustomHTML();
+private:
+  const char *_id;
+  const char *_placeholder;
+  String _value;
+  const char *_customHTML;
 
-    void init(const char *id, const char *placeholder, const char *defaultValue, int length, const char *custom);
+  void init(const char *id, const char *placeholder, const char *defaultValue, int length, const char *custom);
 
-    friend class WiFiManager;
+  friend class WiFiManager;
 };
 
 class WiFiManager
 {
   public:
     WiFiManager();
+    virtual ~WiFiManager();
 
     virtual void  bindHandler();
 
@@ -252,7 +255,7 @@ class WiFiManager
     IPAddress     _sta_static_gw;
     IPAddress     _sta_static_sn;
 
-    int           _paramsCount            = 0;
+//    int           _paramsCount            = 0;
     int           _minimumQuality         = -1;
     boolean       _removeDuplicateAPs     = true;
     boolean       _shouldBreakAfterConfig = false;
@@ -313,10 +316,7 @@ class WiFiManager
     void (*_apcallback)(WiFiManager*) = NULL;
     void (*_savecallback)(void) = NULL;
 
-    WiFiManagerParameter* _params[WIFI_MANAGER_MAX_PARAMS];
-
-    template <typename Generic>
-    static void _DEBUG_WM(Generic text);
+    std::vector<WiFiManagerParameter*> _params;
 
     template <class T>
     auto optionalIPFromString(T *obj, const char *s) -> decltype(  obj->fromString(s)  ) {
@@ -340,5 +340,26 @@ public:
   virtual void handleSerialMon();
   virtual void handleSerialMonIf();
   virtual void handleScriptMon();
+#endif
+
+#if WIFIMAN_DEBUG
+public:
+  // source
+  // https://github.com/nkolban/ESPLibs/blob/master/ArduinoLibs/Common/ESP_Log.h
+  class ESPLog {
+  public:
+    static void ardprintf(const String& str, ...);
+    template <typename Generic>
+    static void ardprintf(Generic text) {
+      Serial.println(text);
+    }
+    static void dumpHex(const char *buf, int size);
+    static void dumpHex(const char *from, const char *to);
+  };
+#endif
+#if (WIFIMAN_DEBUG)
+#define DEBUG_WM(fmt, ...)      WiFiManager::ESPLog::ardprintf(fmt, ##__VA_ARGS__)
+#else
+#define DEBUG_WM(...)      do {} while(0)
 #endif
 };
