@@ -13,11 +13,11 @@
 #define UART1 1
 #endif
 
-#if defined(USE_GLOBAL_HACK_SERIAL) && !defined(NO_GLOBAL_INSTANCES) && defined(NO_GLOBAL_SERIAL)
-HackSerial HKSerial(UART0);
+#if defined(USE_GLOBAL_HACK_SERIAL)
+HackSerial Serial(UART0);
 #endif
-#if defined(USE_GLOBAL_HACK_SERIAL1) && !defined(NO_GLOBAL_INSTANCES) && defined(NO_GLOBAL_SERIAL1)
-HackSerial HKSerial1(UART1);
+#if defined(USE_GLOBAL_HACK_SERIAL1)
+HackSerial Serial1(UART1);
 #endif
 
 int HackSerial::available(void) {
@@ -58,6 +58,17 @@ size_t HackSerial::write(uint8_t ch) {
   }
   return HardwareSerial::write(ch);
 }
+
+#ifdef ESP32
+size_t HackSerial::write(const uint8_t *buffer, size_t size) {
+  if (on_write) {
+    for (int i = 0; i < size; i++) {
+      on_write(buffer[i]);
+    }
+  }
+  return HardwareSerial::write(buffer, size);
+}
+#endif
 
 void HackSerial::set_input_buf(const String& str) {
   serial_input_hack_buf_ = str;

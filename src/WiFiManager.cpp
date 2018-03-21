@@ -1,5 +1,5 @@
 /**************************************************************
-   WiFiManager is a library for the ESP8266/Arduino platform
+   WiFiManager is a library for the ESP32/ESP8266/Arduino platform
    (https://github.com/esp8266/Arduino) to enable easy
    configuration and reconfiguration of WiFi credentials using a Captive Portal
    inspired by:
@@ -16,6 +16,10 @@
 
 #ifdef ESP32
 #include <EEPROM.h>
+#endif
+
+#ifdef ESP32_WIFI_AUTOCONNECT_BUG
+#include <EEPROM_variables.h>
 #endif
 
 namespace {
@@ -82,8 +86,7 @@ using namespace wifiman_const;
 WiFiManagerParameter::WiFiManagerParameter(const char *custom) {
   _id = NULL;
   _placeholder = NULL;
-  _length = 0;
-  _value = NULL;
+  _value = "";
 
   _customHTML = custom;
 }
@@ -97,23 +100,19 @@ WiFiManagerParameter::WiFiManagerParameter(const char *id, const char *placehold
 }
 
 void WiFiManagerParameter::init(const char *id, const char *placeholder, const char *defaultValue, int length, const char *custom) {
-  setlocale(LC_ALL,"");
   _id = id;
   _placeholder = placeholder;
-  _length = length;
-  _value = new char[length + 1];
-  for (int i = 0; i < length; i++) {
-    _value[i] = 0;
-  }
   if (defaultValue != NULL) {
-    strncpy(_value, defaultValue, length);
+    _value = defaultValue;
   }
-
   _customHTML = custom;
 }
 
+WiFiManagerParameter::~WiFiManagerParameter() {
+}
+
 const char* WiFiManagerParameter::getValue() {
-  return _value;
+  return _value.c_str();
 }
 const char* WiFiManagerParameter::getID() {
   return _id;
@@ -122,13 +121,18 @@ const char* WiFiManagerParameter::getPlaceholder() {
   return _placeholder;
 }
 int WiFiManagerParameter::getValueLength() {
-  return _length;
+  return _value.length();
 }
 const char* WiFiManagerParameter::getCustomHTML() {
   return _customHTML;
 }
 
 WiFiManager::WiFiManager() {
+}
+
+WiFiManager::~WiFiManager()
+{
+  _params.clear();
 }
 
 const String WiFiManager::get_html_head() {
@@ -211,14 +215,15 @@ const String WiFiManager::get_html_info() {
   return FPSTR(HTML_INFO);
 }
 
-void WiFiManager::addParameter(WiFiManagerParameter *p) {
-  _params[_paramsCount] = p;
-  _paramsCount++;
+void WiFiManager::addParameter(WiFiManagerParameter* p) {
+  _params.push_back(p);
   DEBUG_WM("Adding parameter");
   DEBUG_WM(p->getID());
 }
 
 void WiFiManager::setupConfigPortal() {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
 #ifdef ESP8266
   dnsServer.reset(new DNSServer());
   server.reset(new ESP8266WebServer(80));
@@ -228,7 +233,6 @@ void WiFiManager::setupConfigPortal() {
   server.reset(new WebServer(80));
 #endif
 
-  DEBUG_WM("");
   _configPortalStart = millis();
 
   DEBUG_WM(F("Configuring access point... "));
@@ -264,9 +268,22 @@ void WiFiManager::setupConfigPortal() {
   bindHandler();
   server->begin(); // Web server start
   DEBUG_WM(F("HTTP server started"));
+
+// For some reason ESP32 does not autoconnect
+#ifdef ESP32_WIFI_AUTOCONNECT_BUG
+  auto eeprom = EEPROM_variables::get_var_ptr();
+  DEBUG_WM(F("autoconnect ssid=%s, pw=%s"), eeprom->ssid, eeprom->password);
+  if (connectWifi(eeprom->ssid, eeprom->password) == WL_CONNECTED) {
+    DEBUG_WM(F("Connected - IP Address: %i"), WiFi.localIP());
+  } else {
+    DEBUG_WM(F("Failed to auto connect: - %d"), WiFi.status());
+  }
+#endif
 }
 
 void WiFiManager::bindHandler() {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
   /* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
   server->on("/", std::bind(&WiFiManager::handleRoot, this));
   server->on("/wifi", std::bind(&WiFiManager::handleWifi, this, true));
@@ -288,12 +305,15 @@ void WiFiManager::bindHandler() {
 }
 
 boolean WiFiManager::autoConnect() {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
   String ssid = "ESP" + String(ESP_getChipId());
   return autoConnect(ssid.c_str(), NULL);
 }
 
 boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
-  DEBUG_WM("");
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
   DEBUG_WM(F("AutoConnect"));
 
   // read eeprom for ssid and pass
@@ -318,7 +338,7 @@ boolean WiFiManager::configPortalHasTimeout(){
     if(_configPortalTimeout == 0 || wifi_softap_get_station_num() > 0){
 #endif
 #ifdef ESP32
-    if(_configPortalTimeout == 0){  // TODO
+    if(_configPortalTimeout == 0) {  // TODO
 #endif
       _configPortalStart = millis(); // kludge, bump configportal start time to skew timeouts
       return false;
@@ -327,11 +347,15 @@ boolean WiFiManager::configPortalHasTimeout(){
 }
 
 boolean WiFiManager::startConfigPortal() {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
   String ssid = "ESP" + String(ESP_getChipId());
   return startConfigPortal(ssid.c_str(), NULL);
 }
 
 boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPassword) {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
   //setup AP
   WiFi.mode(WIFI_AP_STA);
   DEBUG_WM("SET AP STA");
@@ -347,7 +371,7 @@ boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPasswo
   connect = false;
   setupConfigPortal();
 
-  while(1){
+  while(1) {
 
     // check if timeout
     if(configPortalHasTimeout()) break;
@@ -356,7 +380,6 @@ boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPasswo
     dnsServer->processNextRequest();
     //HTTP
     server->handleClient();
-
 
     if (connect) {
       connect = false;
@@ -398,19 +421,19 @@ boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPasswo
 
 void WiFiManager::startConfigPortalMulti(char const *apName, char const *apPassword)
 {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
 #ifdef WIFIMAN_MONITOR_DEVICE
   WIFIMAN_MONITOR_DEVICE.on_write = [this](uint8_t ch){
     return serial_on_write_hook(ch);
   };
-
-//  WIFIMAN_MONITOR_DEVICE.on_read = [this](int ch){
-//    return serial_on_write_hook(ch);
-//  };
 #endif
 
   //setup AP
   WiFi.mode(WIFI_AP_STA);
   DEBUG_WM("SET AP STA");
+
+  WiFi.disconnect();
 
   // Keep entities as it disappears
   static String apName_entity = apName;
@@ -431,9 +454,6 @@ void WiFiManager::startConfigPortalMulti(char const *apName, char const *apPassw
 void WiFiManager::updateConfigPortalMulti()
 {
   do {
-    // check if timeout
-    if (configPortalHasTimeout()) break;
-
     //DNS
     dnsServer->processNextRequest();
     //HTTP
@@ -473,6 +493,7 @@ void WiFiManager::updateConfigPortalMulti()
 
 int WiFiManager::connectWifi(String ssid, String pass) {
   DEBUG_WM(F("Connecting as wifi client..."));
+  DEBUG_WM(F("id:<%s> passwd:<%s>"), ssid.c_str(), pass.c_str());
 
   // check if we've got static_ip settings, if we do, use those.
   if (_sta_static_ip) {
@@ -519,6 +540,8 @@ int WiFiManager::connectWifi(String ssid, String pass) {
 }
 
 uint8_t WiFiManager::waitForConnectResult() {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
   if (_connectTimeout == 0) {
     return WiFi.waitForConnectResult();
   } else {
@@ -542,6 +565,8 @@ uint8_t WiFiManager::waitForConnectResult() {
 }
 
 void WiFiManager::startWPS() {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
 #ifdef ESP8266
   DEBUG_WM("START WPS");
   WiFi.beginWPSConfig();
@@ -842,24 +867,18 @@ void WiFiManager::handleWifi(boolean scan) {
   page += get_html_menu_end();
 
   page += get_html_wifi_form_start();
-  char parLength[5];
   // add the extra parameters to the form
-  for (int i = 0; i < _paramsCount; i++) {
-    if (_params[i] == NULL) {
-      break;
-    }
-
+  for (auto param: _params) {
     String pitem = get_html_wifi_form_param();
-    if (_params[i]->getID() != NULL) {
-      pitem.replace(FPSTR(FS_I), _params[i]->getID());
-      pitem.replace(FPSTR(FS_N), _params[i]->getID());
-      pitem.replace(FPSTR(FS_N), _params[i]->getPlaceholder());
-      snprintf(parLength, 5, "%d", _params[i]->getValueLength());
-      pitem.replace(FPSTR(FS_L), parLength);
-      pitem.replace(FPSTR(FS_V), _params[i]->getValue());
-      pitem.replace(FPSTR(FS_C), _params[i]->getCustomHTML());
+    if (param->getID() != NULL) {
+      pitem.replace(FPSTR(FS_I), param->getID());
+      pitem.replace(FPSTR(FS_N), param->getID());
+      pitem.replace(FPSTR(FS_N), param->getPlaceholder());
+      pitem.replace(FPSTR(FS_L), String(param->getValueLength()));
+      pitem.replace(FPSTR(FS_V), param->getValue());
+      pitem.replace(FPSTR(FS_C), param->getCustomHTML());
     } else {
-      pitem = _params[i]->getCustomHTML();
+      pitem = param->getCustomHTML();
     }
 
     page += pitem;
@@ -924,17 +943,26 @@ void WiFiManager::handleWifiSave() {
   _ssid = server->arg(F("s")).c_str();
   _pass = server->arg(F("p")).c_str();
 
+// For some reason ESP32 does not autoconnect
+#ifdef ESP32_WIFI_AUTOCONNECT_BUG
+  {
+    auto eeprom = EEPROM_variables::get_var_ptr();
+    memset(eeprom->ssid, 0, sizeof(eeprom->ssid));
+    memset(eeprom->password, 0, sizeof(eeprom->password));
+    strncpy(eeprom->ssid, _ssid.c_str(), sizeof(eeprom->ssid) - 1);
+    strncpy(eeprom->password, _pass.c_str(), sizeof(eeprom->password) - 1);
+    EEPROM_variables::commit();
+  }
+#endif
+
   //parameters
-  for (int i = 0; i < _paramsCount; i++) {
-    if (_params[i] == NULL) {
-      break;
-    }
+  for (auto param: _params) {
     //read parameter
-    String value = server->arg(_params[i]->getID()).c_str();
-    //store it in array
-    value.toCharArray(_params[i]->_value, _params[i]->_length);
+    String value = server->arg(param->getID()).c_str();
+    //store
+    param->_value = value;
     DEBUG_WM(F("Parameter"));
-    DEBUG_WM(_params[i]->getID());
+    DEBUG_WM(param->getID());
     DEBUG_WM(value);
   }
 
@@ -1109,19 +1137,6 @@ void WiFiManager::handleReset(bool is_also_setting) {
 }
 
 void WiFiManager::handleNotFound() {
-
-// DEBUG
-{
-  String message = F("File Not Found\n");
-  message += F("URI: ");
-  message += server->uri();
-  message += F("\nMethod: ");
-  message += ( server->method() == HTTP_GET ) ? F("GET") : F("POST");
-  message += F("\nArguments: ");
-  message += server->args();
-  message += F("\n");
-}
-
   if (captivePortal()) { // If captive portal redirect instead of displaying the error page.
     return;
   }
@@ -1148,6 +1163,8 @@ void WiFiManager::handleNotFound() {
 
 /** Redirect to captive portal if we got a request for another domain. Return true in that case so the page handler do not try to handle the request again. */
 boolean WiFiManager::captivePortal() {
+  DEBUG_WM(F(__PRETTY_FUNCTION__));
+
   if (!isIp(server->hostHeader()) ) {
     DEBUG_WM(F("Request redirected to captive portal"));
     server->sendHeader(FPSTR(FS_LOCATION), String(F("http://")) + toStringIp(server->client().localIP()), true);
@@ -1178,14 +1195,6 @@ void WiFiManager::setRemoveDuplicateAPs(boolean removeDuplicates) {
   _removeDuplicateAPs = removeDuplicates;
 }
 
-
-
-template <typename Generic>
-void WiFiManager::_DEBUG_WM(Generic text) {
-  Serial.print("*WM: ");
-  Serial.println(text);
-}
-
 int WiFiManager::getRSSIasQuality(int RSSI) {
   int quality = 0;
 
@@ -1214,8 +1223,150 @@ boolean WiFiManager::isIp(String str) {
 String WiFiManager::toStringIp(IPAddress ip) {
   String res = "";
   for (int i = 0; i < 3; i++) {
-    res += String((ip >> (8 * i)) & 0xFF) + F(".");
+    res += String((ip >> (8 * i)) & 0xFF) + ".";
   }
   res += String(((ip >> 8 * 3)) & 0xFF);
   return res;
 }
+
+
+#if WIFIMAN_DEBUG
+
+// source
+// https://github.com/nkolban/ESPLibs/blob/master/ArduinoLibs/Common/ESP_Log.cpp
+
+#define Serial1 Serial
+
+#define ARDBUFFER 16 //Buffer for storing intermediate strings. Performance may vary depending on size.
+
+/**
+ * Perform a "printf" to the Arduino Serial port.  The supported
+ * printf flags are:
+ * - %d - Print an integer
+ * - %l - Print a long integer
+ * - %c - Print a character
+ * - %s - Print a string
+ * - %x - Print an integer in hex
+ * - %i - Print an IP address
+add to:
+ * - %S - Print a string(String*)
+ * - %p - Print a pointer
+ */
+void WiFiManager::ESPLog::ardprintf(const String& str, ...) {
+  int i, j;
+  char temp[ARDBUFFER + 1];
+
+  va_list vargs;
+  va_start(vargs, str);
+  //Iterate over formatting string
+  for (i = 0, j = 0; str[i] != '\0'; i++) {
+    if (str[i] == '%') {
+      //Clear buffer
+      temp[j] = '\0';
+      Serial1.print(temp);
+      j = 0;
+      temp[0] = '\0';
+
+      //Process argument
+      switch (str[++i]) {
+        case 'd':
+          Serial1.print(va_arg(vargs, int));
+          break;
+        case 'l':
+          Serial1.print(va_arg(vargs, long));
+          break;
+        case 'f':
+          Serial1.print(va_arg(vargs, double));
+          break;
+        case 'c':
+          Serial1.print((char) va_arg(vargs, int));
+          break;
+        case 's':
+          Serial1.print(va_arg(vargs, char *));
+          break;
+        case 'x':
+          Serial1.print(va_arg(vargs, int), HEX);
+          break;
+        case 'i':
+          char *p;
+          p = va_arg(vargs, char *);
+          Serial1.print(String((int)p[0]) + "." + String((int)p[1]) + "." + String((int)p[2]) + "." + String((int)p[3]));
+          break;
+        case 'S': {
+          auto arg = va_arg(vargs, String*);
+          Serial1.print(*arg);
+          break;
+        }
+        case 'p':
+          Serial1.print(va_arg(vargs, uint32_t), HEX);
+          break;
+        default:
+          ;
+      };
+    } else {
+      //Add to buffer
+      temp[j] = str[i];
+      j = (j + 1) % ARDBUFFER;
+      if (j == 0)  //If buffer is full, empty buffer.
+      {
+        temp[ARDBUFFER] = '\0';
+        Serial1.print(temp);
+        temp[0] = '\0';
+      }
+    }
+  };
+  // If there are any output characters not yet sent, send them now.
+  if (j != 0) {
+    temp[j] = '\0';
+    Serial1.print(temp);
+  }
+
+  Serial1.print("\n");
+
+  //Serial1.println(); //Print trailing newline
+  va_end(vargs);
+} // End of ardprintf
+
+
+/**
+ * Create and dump a hex array of the content of memory.
+ */
+void WiFiManager::ESPLog::dumpHex(const char *buf, int size) {
+  ESPLog::ardprintf("Dump hex of address: 0x%x for %d\n", buf, size);
+  int diff = ((int)buf)% 16;
+  int lineAddr = (int)buf - diff;
+
+  ESPLog::ardprintf("%x ", (int)lineAddr);
+  for (int i=0; i<diff; i++) {
+    ESPLog::ardprintf("   ");
+  }
+  size += diff;
+  buf = buf - diff;
+  for (int i=diff; i<size; i++) {
+    if (i>0 && i%16==0) {
+      ESPLog::ardprintf("\n");
+      lineAddr+=16;
+      ESPLog::ardprintf("%x ", (int)lineAddr);
+    }
+    char c = buf[i];
+    if (c<=0xf) {
+      ESPLog::ardprintf("0");
+    }
+    ESPLog::ardprintf("%x ", (int)c);
+  }
+  ESPLog::ardprintf("\n");
+} // End of dumpHex
+
+/**
+ * Create and dump a hex array of the content of memory.
+ */
+void WiFiManager::ESPLog::dumpHex(const char *from, const char *to) {
+  int size = to - from;
+  if (size <= 0) {
+    ESPLog::ardprintf("ESPLog::dumpHex: Error end  (0x%x) is < start (0x%x)\n", from, to);
+    return;
+  }
+  ESPLog::dumpHex(from, size);
+} // End of dumpHex
+
+#endif // #if WIFIMAN_DEBUG
